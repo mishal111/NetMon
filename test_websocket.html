@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        #messages { border: 1px solid #ccc; height: 400px; overflow-y: auto; padding: 10px; background: #f9f9f9; border-radius: 4px; }
+        .msg { margin-bottom: 5px; font-family: monospace; }
+        .connected { color: green; }
+        .disconnected { color: red; }
+        .received { color: blue; }
+        button { padding: 8px 16px; margin-bottom: 10px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Connection Test</h1>
+    <button onclick="sendMessage()">Send Test Message</button>
+    <button onclick="clearMessages()">Clear</button>
+    
+    <div id="messages"></div>
+    
+    <script>
+        const ws = new WebSocket("ws://localhost:8001/ws/packets");
+        const messagesDiv = document.getElementById("messages");
+        
+        ws.onopen = function(event) {
+            addMessage("✅ Connected to WebSocket", "connected");
+        };
+        
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            addMessage("📨 Received: " + JSON.stringify(data), "received");
+        };
+        
+        ws.onerror = function(error) {
+            addMessage("❌ Error: " + error, "disconnected");
+        };
+        
+        ws.onclose = function(event) {
+            addMessage("❌ Disconnected from WebSocket", "disconnected");
+        };
+        
+        function sendMessage() {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send("Hello from browser");
+            } else {
+                addMessage("❌ Cannot send, WebSocket is not open", "disconnected");
+            }
+        }
+
+        function clearMessages() {
+            messagesDiv.innerHTML = "";
+        }
+        
+        function addMessage(msg, className) {
+            const el = document.createElement("div");
+            el.className = "msg " + (className || "");
+            el.textContent = new Date().toLocaleTimeString() + " - " + msg;
+            messagesDiv.appendChild(el);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+    </script>
+</body>
+</html>
