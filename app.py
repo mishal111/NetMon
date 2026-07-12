@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from influxdb import InfluxDBClient
 import uvicorn
 
 # Set up logging
@@ -26,6 +27,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ==========================================
+# InfluxDB Connection
+# ==========================================
+try:
+    influx = InfluxDBClient(host='localhost', port=8086, username='admin', password='admin', database='network_security')
+except Exception as e:
+    logger.error(f"Error connecting to InfluxDB on startup: {e}")
+    influx = None
+
+def query_influx(query_string):
+    """Execute InfluxDB query"""
+    if not influx:
+        return []
+    try:
+        results = influx.query(query_string)
+        return list(results.get_points())
+    except Exception as e:
+        logger.error(f"InfluxDB query error: {e}")
+        return []
 
 # ==========================================
 # Database Connection Helpers
@@ -313,6 +334,95 @@ async def get_summary_statistics():
             "top_ips": [],
             "top_ports": []
         }
+
+# ==========================================
+# InfluxDB Metrics Endpoints
+# ==========================================
+@app.get("/metrics/traffic-last-hour")
+async def get_traffic_last_hour():
+    """Get traffic metrics for the last hour (5-minute intervals)"""
+    query = """
+        SELECT 
+            MEAN(packet_count) as packets,
+            MEAN(byte_count) as bytes,
+            MEAN(avg_packet_size) as avg_size
+        FROM network_traffic
+        WHERE type='overall' AND time > now() - 1h
+        GROUP BY time(5m)
+    """
+    
+    data = query_influx(query)
+    return {
+        "time_range": "last_hour",
+        "interval": "5 minutes",
+        "points": data,
+        "count": len(data)
+    }
+
+@app.get("/metrics/protocols-last-hour")
+async def get_protocols_last_hour():
+    """Get protocol breakdown for the last hour"""
+    query = """
+        SELECT 
+            SUM(count) as total
+        FROM network_traffic
+        WHERE type='by_protocol' AND time > now() - 1h
+        GROUP BY protocol
+    """
+    
+    data = query_influx(query)
+    
+    # Format as list of {protocol, count} objects
+    formatted = [
+        {"protocol": point.get("protocol"), "count": point.get("total")}
+        for point in data
+    ]
+    
+    return {
+        "time_range": "last_hour",
+        "protocols": formatted,
+        "count": len(formatted)
+    }
+
+@app.get("/metrics/top-ips-realtime")
+async def get_top_ips_realtime():
+    """Get current top IPs from InfluxDB"""
+    query = """
+        SELECT MAX(packet_count) as count
+        FROM top_ips
+        WHERE time > now() - 10m
+        GROUP BY ip
+        ORDER BY count DESC
+        LIMIT 10
+    """
+    
+    data = query_influx(query)
+    return {
+        "type": "top_ips",
+        "time_range": "last_10_minutes",
+        "ips": data,
+        "count": len(data)
+    }
+
+@app.get("/metrics/top-ports-realtime")
+async def get_top_ports_realtime():
+    """Get current top ports from InfluxDB"""
+    query = """
+        SELECT MAX(packet_count) as count
+        FROM top_ports
+        WHERE time > now() - 10m
+        GROUP BY port
+        ORDER BY count DESC
+        LIMIT 10
+    """
+    
+    data = query_influx(query)
+    return {
+        "type": "top_ports",
+        "time_range": "last_10_minutes",
+        "ports": data,
+        "count": len(data)
+    }
 
 # ==========================================
 # WebSocket Endpoint
