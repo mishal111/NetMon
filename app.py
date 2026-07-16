@@ -131,6 +131,40 @@ def get_top_ports(limit: int = 10):
     return results
 
 # ==========================================
+# Alerts Database Helpers
+# ==========================================
+def get_alerts(limit: int = 100):
+    """Query alerts from database"""
+    try:
+        conn = get_db_connection()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM alerts ORDER BY id DESC LIMIT ?", (limit,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+    except sqlite3.OperationalError:
+        return []
+
+def get_alerts_summary():
+    """Get alert counts by severity and type"""
+    try:
+        conn = get_db_connection()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT severity, COUNT(*) as count FROM alerts GROUP BY severity")
+        by_severity = {row["severity"]: row["count"] for row in cursor.fetchall()}
+        
+        cursor.execute("SELECT alert_type, COUNT(*) as count FROM alerts GROUP BY alert_type")
+        by_type = {row["alert_type"]: row["count"] for row in cursor.fetchall()}
+        
+        conn.close()
+        return {"by_severity": by_severity, "by_type": by_type}
+    except sqlite3.OperationalError:
+        return {"by_severity": {}, "by_type": {}}
+
+# ==========================================
 # WebSocket Manager & Broadcaster
 # ==========================================
 class ConnectionManager:
@@ -200,6 +234,45 @@ async def packet_broadcaster():
             logger.error(f"[!] Error in packet broadcaster: {e}")
             await asyncio.sleep(1)
 
+async def alert_broadcaster():
+    """Continuously broadcast new alerts to WebSocket clients"""
+    last_id = 0
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT MAX(id) as max_id FROM alerts")
+        row = cursor.fetchone()
+        if row and row["max_id"] is not None:
+            last_id = row["max_id"]
+        conn.close()
+    except Exception:
+        pass
+
+    while True:
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM alerts WHERE id > ? ORDER BY id", (last_id,))
+            new_alerts = cursor.fetchall()
+            conn.close()
+            
+            if new_alerts:
+                for alert in new_alerts:
+                    await manager.broadcast({
+                        "type": "new_alert",
+                        "alert": dict(alert)
+                    })
+                    last_id = alert["id"]
+            
+            await asyncio.sleep(2)
+        
+        except sqlite3.OperationalError:
+            await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"[!] Error in alert broadcaster: {e}")
+            await asyncio.sleep(2)
+
 # ==========================================
 # REST API Endpoints
 # ==========================================
@@ -208,6 +281,8 @@ async def startup_event():
     logger.info("[+] FastAPI server started")
     # Start packet broadcaster in background
     asyncio.create_task(packet_broadcaster())
+    # Start alert broadcaster in background
+    asyncio.create_task(alert_broadcaster())
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -388,41 +463,73 @@ async def get_protocols_last_hour():
 async def get_top_ips_realtime():
     """Get current top IPs from InfluxDB"""
     query = """
-        SELECT MAX(packet_count) as count
+        SELECT packet_count, ip
         FROM top_ips
-        WHERE time > now() - 10m
-        GROUP BY ip
-        ORDER BY count DESC
-        LIMIT 10
+        WHERE time > now() - 1m
     """
     
     data = query_influx(query)
+    
+    # Sort in python and get top 10 unique IPs (handling multiple snapshots in last min)
+    ip_max = {}
+    for pt in data:
+        ip = pt.get("ip")
+        count = pt.get("packet_count", 0)
+        if ip and count > ip_max.get(ip, 0):
+            ip_max[ip] = count
+            
+    sorted_ips = sorted([{"ip": k, "count": v} for k, v in ip_max.items()], key=lambda x: x["count"], reverse=True)
+    
     return {
         "type": "top_ips",
         "time_range": "last_10_minutes",
-        "ips": data,
-        "count": len(data)
+        "ips": sorted_ips[:10],
+        "count": len(sorted_ips[:10])
     }
 
 @app.get("/metrics/top-ports-realtime")
 async def get_top_ports_realtime():
     """Get current top ports from InfluxDB"""
     query = """
-        SELECT MAX(packet_count) as count
+        SELECT packet_count, port
         FROM top_ports
-        WHERE time > now() - 10m
-        GROUP BY port
-        ORDER BY count DESC
-        LIMIT 10
+        WHERE time > now() - 1m
     """
     
     data = query_influx(query)
+    
+    port_max = {}
+    for pt in data:
+        port = pt.get("port")
+        count = pt.get("packet_count", 0)
+        if port and count > port_max.get(port, 0):
+            port_max[port] = count
+            
+    sorted_ports = sorted([{"port": k, "count": v} for k, v in port_max.items()], key=lambda x: x["count"], reverse=True)
+    
     return {
         "type": "top_ports",
         "time_range": "last_10_minutes",
-        "ports": data,
-        "count": len(data)
+        "ports": sorted_ports[:10],
+        "count": len(sorted_ports[:10])
     }
+
+# ==========================================
+# Alerts Endpoints
+# ==========================================
+@app.get("/alerts")
+async def fetch_alerts(limit: int = Query(50, ge=1, le=500)):
+    """Get recent alerts"""
+    alerts = get_alerts(limit=limit)
+    return {
+        "count": len(alerts),
+        "alerts": alerts
+    }
+
+@app.get("/alerts/summary")
+async def fetch_alerts_summary():
+    """Get summary of alerts"""
+    return get_alerts_summary()
 
 # ==========================================
 # WebSocket Endpoint
