@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-dark-base text-gray-200 antialiased selection:bg-primary-blue selection:text-white;
+  }
+}
+
+@layer components {
+  /* Glassmorphism Panel Utility */
+  .glass-panel {
+    @apply bg-dark-card/90 backdrop-blur-md border border-dark-border rounded-xl shadow-lg;
+  }
+  
+  /* Glowing border effect */
+  .glow-critical {
+    box-shadow: 0 0 15px -3px rgba(239, 68, 68, 0.4);
+  }
+  
+  .glow-primary {
+    box-shadow: 0 0 15px -3px rgba(59, 130, 246, 0.2);
+  }
+}
+
+/* Custom Scrollbar for the dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-dark-border rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-500;
+}
