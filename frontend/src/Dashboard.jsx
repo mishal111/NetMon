@@ -1,12 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { Network, Activity, Globe, ShieldAlert, Cpu, Zap } from 'lucide-react';
+import { Network, Activity, Globe, ShieldAlert, Cpu, Zap, Settings, AlertTriangle } from 'lucide-react';
+import useStore from './store/useStore';
+
+// Components
+import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import KPICard from './components/KPICard';
 import NetworkTrafficChart from './components/NetworkTrafficChart';
 import LivePacketStream from './components/LivePacketStream';
 import AlertPanel from './components/AlertPanel';
+import AdvancedSearch from './components/AdvancedSearch';
+import NetworkTopology from './components/NetworkTopology';
+import ThreatTimeline from './components/ThreatTimeline';
+import AlertSettings from './components/AlertSettings';
 
 export default function Dashboard() {
+  const { activeView } = useStore();
+  
   const [trafficData, setTrafficData] = useState([]);
   const [packets, setPackets] = useState([]);
   const [alerts, setAlerts] = useState([]);
@@ -26,13 +36,11 @@ export default function Dashboard() {
 
   const fetchInitialData = async () => {
     try {
-      // Fetch initial alerts
       const alertsRes = await fetch(`${API_BASE}/alerts`);
       const alertsData = await alertsRes.json();
       setAlerts(alertsData.alerts || []);
 
-      // Fetch initial packets
-      const packetsRes = await fetch(`${API_BASE}/packets?limit=50`);
+      const packetsRes = await fetch(`${API_BASE}/packets?limit=200`); 
       const packetsData = await packetsRes.json();
       setPackets(packetsData.packets || []);
       
@@ -44,34 +52,28 @@ export default function Dashboard() {
 
   const fetchMetrics = async () => {
     try {
-      // Traffic
       const trafficRes = await fetch(`${API_BASE}/metrics/traffic-last-hour`);
       const trafficJson = await trafficRes.json();
       const points = trafficJson.points || [];
       setTrafficData(points);
       
-      // Top IPs
       const ipsRes = await fetch(`${API_BASE}/metrics/top-ips-realtime`);
       const ipsJson = await ipsRes.json();
       
-      // Top Ports
       const portsRes = await fetch(`${API_BASE}/metrics/top-ports-realtime`);
       const portsJson = await portsRes.json();
       
-      // Protocols
       const protoRes = await fetch(`${API_BASE}/metrics/protocols-last-hour`);
       const protoJson = await protoRes.json();
 
-      // Calculate KPIs
       if (points.length > 0) {
         const latest = points[points.length - 1];
-        const pps = Math.round((latest.packets || 0) / 10); // 10s window avg
-        const bps = ((latest.bytes || 0) / 10) * 8; // bits per second
+        const pps = Math.round((latest.packets || 0) / 10);
+        const bps = ((latest.bytes || 0) / 10) * 8;
         let bandwidthStr = `${bps.toFixed(0)} bps`;
         if (bps > 1000000) bandwidthStr = `${(bps / 1000000).toFixed(1)} Mbps`;
         else if (bps > 1000) bandwidthStr = `${(bps / 1000).toFixed(1)} Kbps`;
         
-        // Generate sparkline from history
         const ppsHistory = points.slice(-10).map(p => ({ value: (p.packets || 0) / 10 }));
         const bwHistory = points.slice(-10).map(p => ({ value: (p.bytes || 0) }));
 
@@ -79,7 +81,7 @@ export default function Dashboard() {
           ...prev,
           pps: { value: pps, trend: 0, history: ppsHistory },
           bandwidth: { value: bandwidthStr, trend: 0, history: bwHistory },
-          activeIps: { value: (ipsJson.ips || []).length * 4, trend: 0, history: [] }, // *4 just to simulate network size
+          activeIps: { value: (ipsJson.ips || []).length * 4, trend: 0, history: [] },
           topProto: protoJson.protocols?.length > 0 ? protoJson.protocols[0].protocol : 'N/A',
           topPort: portsJson.ports?.length > 0 ? portsJson.ports[0].port : 'N/A'
         }));
@@ -92,29 +94,24 @@ export default function Dashboard() {
   useEffect(() => {
     fetchInitialData();
 
-    // Setup WebSocket
     const ws = new WebSocket(WS_URL);
     
-    ws.onopen = () => {
-      setConnected(true);
-    };
+    ws.onopen = () => setConnected(true);
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'new_packet') {
-          setPackets(prev => [data.packet, ...prev].slice(0, 50)); 
+          setPackets(prev => [data.packet, ...prev].slice(0, 200)); 
         } else if (data.type === 'new_alert') {
-          setAlerts(prev => [data.alert, ...prev].slice(0, 50));
+          setAlerts(prev => [data.alert, ...prev].slice(0, 100));
         }
       } catch (err) {
         console.error("WebSocket error:", err);
       }
     };
 
-    ws.onclose = () => {
-      setConnected(false);
-    };
+    ws.onclose = () => setConnected(false);
 
     const interval = setInterval(fetchMetrics, 10000);
 
@@ -124,80 +121,85 @@ export default function Dashboard() {
     };
   }, []);
 
-  return (
-    <div className="min-h-screen bg-dark-base text-gray-200 p-4 md:p-6 flex flex-col font-sans">
-      
-      <Header connected={connected} />
+  // --- View Renderers ---
 
-      {/* KPI Cards Grid */}
+  const renderOverview = () => (
+    <>
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-        <KPICard 
-          title="Traffic Rate" 
-          value={kpiData.pps.value} 
-          unit="PPS"
-          trend={2} 
-          trendDirection="up"
-          icon={Activity} 
-          sparklineData={kpiData.pps.history}
-          colorClass="text-primary-blue"
-        />
-        <KPICard 
-          title="Bandwidth" 
-          value={kpiData.bandwidth.value} 
-          trend={5} 
-          trendDirection="up"
-          icon={Zap} 
-          sparklineData={kpiData.bandwidth.history}
-          colorClass="text-severity-success"
-        />
-        <KPICard 
-          title="Active Nodes" 
-          value={kpiData.activeIps.value} 
-          icon={Network} 
-          colorClass="text-severity-medium"
-        />
-        <KPICard 
-          title="Total Alerts" 
-          value={alerts.length} 
-          trend={alerts.length > 10 ? 12 : 0} 
-          trendDirection={alerts.length > 10 ? 'down' : 'up'}
-          icon={ShieldAlert} 
-          colorClass="text-severity-critical"
-        />
-        <KPICard 
-          title="Top Protocol" 
-          value={kpiData.topProto} 
-          icon={Globe} 
-          colorClass="text-primary-blue"
-        />
-        <KPICard 
-          title="Primary Port" 
-          value={kpiData.topPort} 
-          icon={Cpu} 
-          colorClass="text-primary-blue"
-        />
+        <KPICard title="Traffic Rate" value={kpiData.pps.value} unit="PPS" trend={2} trendDirection="up" icon={Activity} sparklineData={kpiData.pps.history} colorClass="text-primary-blue" />
+        <KPICard title="Bandwidth" value={kpiData.bandwidth.value} trend={5} trendDirection="up" icon={Zap} sparklineData={kpiData.bandwidth.history} colorClass="text-severity-success" />
+        <KPICard title="Active Nodes" value={kpiData.activeIps.value} icon={Network} colorClass="text-severity-medium" />
+        <KPICard title="Total Alerts" value={alerts.length} trend={alerts.length > 10 ? 12 : 0} trendDirection={alerts.length > 10 ? 'down' : 'up'} icon={ShieldAlert} colorClass="text-severity-critical" />
+        <KPICard title="Top Protocol" value={kpiData.topProto} icon={Globe} colorClass="text-primary-blue" />
+        <KPICard title="Primary Port" value={kpiData.topPort} icon={Cpu} colorClass="text-primary-blue" />
       </div>
 
-      {/* Main Layout Grid */}
-      <div className="flex-1 grid grid-cols-12 gap-6 min-h-0">
-        
-        {/* Left Column (Spans 9 cols on large screens) */}
+      <div className="flex-1 grid grid-cols-12 gap-6 min-h-0 pb-6">
         <div className="col-span-12 xl:col-span-9 flex flex-col gap-6 min-h-0">
-          
           <div className="h-72 shrink-0">
             <NetworkTrafficChart data={trafficData} />
           </div>
-          
           <div className="flex-1 min-h-[300px]">
             <LivePacketStream packets={packets} />
           </div>
-
         </div>
-
-        {/* Right Column - Alerts (Spans 3 cols) */}
         <div className="col-span-12 xl:col-span-3 h-full min-h-[500px]">
           <AlertPanel alerts={alerts} />
         </div>
+      </div>
+    </>
+  );
+
+  const renderPackets = () => (
+    <div className="flex flex-col h-full min-h-0 pb-6">
+      <AdvancedSearch />
+      <div className="flex-1 min-h-0">
+        <LivePacketStream packets={packets} />
+      </div>
+    </div>
+  );
+
+  const renderAnalytics = () => (
+    <div className="flex flex-col h-full min-h-0 pb-6 gap-6">
+      <NetworkTopology packets={packets} alerts={alerts} />
+      <div className="h-72 shrink-0">
+        <NetworkTrafficChart data={trafficData} />
+      </div>
+    </div>
+  );
+
+  const renderAlerts = () => (
+    <div className="flex flex-col h-full min-h-0 pb-6">
+      <ThreatTimeline alerts={alerts} />
+    </div>
+  );
+
+  const renderSettings = () => (
+    <div className="flex flex-col h-full min-h-0 pb-6 overflow-y-auto">
+      <AlertSettings />
+    </div>
+  );
+
+  const renderContent = () => {
+    switch (activeView) {
+      case 'overview': return renderOverview();
+      case 'packets': return renderPackets();
+      case 'analytics': return renderAnalytics();
+      case 'alerts': return renderAlerts();
+      case 'settings': return renderSettings();
+      default: return renderOverview();
+    }
+  };
+
+  return (
+    <div className="flex h-screen bg-dark-base text-gray-200 font-sans overflow-hidden selection:bg-primary-blue selection:text-white">
+      {/* Sidebar Navigation */}
+      <Sidebar />
+      
+      {/* Main Content Area */}
+      <div id="dashboard-main-content" className="flex-1 flex flex-col p-4 md:px-8 md:py-6 overflow-y-auto overflow-x-hidden relative h-full custom-scrollbar">
+        <Header connected={connected} packets={packets} alerts={alerts} />
+        {renderContent()}
       </div>
     </div>
   );

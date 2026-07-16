@@ -1,8 +1,9 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { ShieldCheck } from 'lucide-react';
+import ExportPanel from './ExportPanel';
 
-export default function Header({ connected }) {
+export default function Header({ connected, packets, alerts }) {
   return (
     <div className="relative overflow-hidden glass-panel mb-6 px-6 py-5 rounded-2xl">
       {/* Animated Background Mesh/Blobs */}
@@ -59,22 +60,26 @@ export default function Header({ connected }) {
           </div>
         </div>
         
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.3 }}
-          className="flex items-center gap-3 bg-dark-base/50 border border-dark-border px-4 py-2 rounded-full"
-        >
-          <div className="flex items-center justify-center relative">
-            {connected && (
-              <span className="absolute w-3 h-3 rounded-full bg-severity-success opacity-75 animate-ping"></span>
-            )}
-            <span className={`relative w-2.5 h-2.5 rounded-full ${connected ? 'bg-severity-success' : 'bg-severity-critical'}`}></span>
-          </div>
-          <span className="text-sm font-medium text-gray-300">
-            {connected ? 'Live Network Monitoring Active' : 'System Disconnected'}
-          </span>
-        </motion.div>
+        <div className="flex items-center gap-4">
+          <ExportPanel packets={packets} alerts={alerts} />
+          
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.3 }}
+            className="flex items-center gap-3 bg-dark-base/50 border border-dark-border px-4 py-2 rounded-full hidden sm:flex"
+          >
+            <div className="flex items-center justify-center relative">
+              {connected && (
+                <span className="absolute w-3 h-3 rounded-full bg-severity-success opacity-75 animate-ping"></span>
+              )}
+              <span className={`relative w-2.5 h-2.5 rounded-full ${connected ? 'bg-severity-success' : 'bg-severity-critical'}`}></span>
+            </div>
+            <span className="text-sm font-medium text-gray-300">
+              {connected ? 'Live Network Monitoring Active' : 'System Disconnected'}
+            </span>
+          </motion.div>
+        </div>
       </div>
     </div>
   );
