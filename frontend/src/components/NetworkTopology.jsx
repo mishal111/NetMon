@@ -8,53 +8,57 @@ import useNodeInspection from '../hooks/useNodeInspection';
 import NodeInspectionPanel from './NodeInspectionPanel';
 import useNetworkLayout from '../hooks/useNetworkLayout';
 import useGeoIPCache from '../hooks/useGeoIPCache';
+import useEdgeWeights from '../hooks/useEdgeWeights';
 import CustomNode from './CustomNode';
+import CustomEdge from './CustomEdge';
+import PerformanceMonitor from './PerformanceMonitor';
 
 const nodeTypes = {
   custom: CustomNode,
+};
+const edgeTypes = {
+  customEdge: CustomEdge,
 };
 
 export default function NetworkTopology({ packets, alerts }) {
   const { selectedNodeId, setSelectedNodeId, nodeData } = useNodeInspection(packets, alerts);
   
-  // Layout Toggle State (Persisted)
   const [useHierarchical, setUseHierarchical] = useState(() => {
     const saved = localStorage.getItem('netmon_layout_pref');
     return saved !== null ? JSON.parse(saved) : true;
   });
 
-  // GeoLocation Toggle State (Persisted)
   const [useGeo, setUseGeo] = useState(() => {
     const saved = localStorage.getItem('netmon_geo_pref');
     return saved !== null ? JSON.parse(saved) : true;
   });
 
   const { geoData, resolveIPs } = useGeoIPCache(useGeo);
+  const weightedEdges = useEdgeWeights(packets);
 
-  const handleToggleLayout = (val) => {
+  const handleToggleLayout = useCallback((val) => {
     setUseHierarchical(val);
     localStorage.setItem('netmon_layout_pref', JSON.stringify(val));
-  };
+  }, []);
 
-  const handleToggleGeo = () => {
+  const handleToggleGeo = useCallback(() => {
     setUseGeo(prev => {
       const next = !prev;
       localStorage.setItem('netmon_geo_pref', JSON.stringify(next));
       return next;
     });
-  };
+  }, []);
 
   // Throttle graph generation to avoid continuous layout recalculation
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    const interval = setInterval(() => setTick(t => t + 1), 10000); // 10s
+    const interval = setInterval(() => setTick(t => t + 1), 10000); 
     return () => clearInterval(interval);
   }, []);
 
   // Build base graph data (Runs once every 10s to capture new IPs)
   const rawGraphData = useMemo(() => {
     const nodesMap = new Map();
-    const edgesMap = new Map();
     
     const threatIps = new Set();
     alerts.forEach(a => {
@@ -62,11 +66,12 @@ export default function NetworkTopology({ packets, alerts }) {
       if (match) threatIps.add(match[0]);
     });
 
-    // Use last 100 packets to get a good snapshot
-    const recentPackets = packets.slice(0, 100);
     const uniqueIps = new Set();
     
     const addNode = (ip) => {
+      // Hard limit to 100 nodes for extreme performance
+      if (nodesMap.size >= 100) return;
+
       uniqueIps.add(ip);
       if (!nodesMap.has(ip)) {
         let bgColor = '#1e293b'; 
@@ -82,11 +87,11 @@ export default function NetworkTopology({ packets, alerts }) {
         nodesMap.set(ip, {
           id: ip,
           position: { x: Math.random() * 800, y: Math.random() * 600 },
-          type: 'custom', // Use CustomNode
+          type: 'custom',
           data: { 
             label: ip,
-            geo: useGeo ? geoData[ip] : null, // Attach cached geo if available
-            style: { // Pass styles down to custom node
+            geo: useGeo ? geoData[ip] : null,
+            style: { 
               background: bgColor,
               color: '#e2e8f0', 
               border: `2px solid ${borderColor}`,
@@ -101,42 +106,24 @@ export default function NetworkTopology({ packets, alerts }) {
       }
     };
 
-    recentPackets.forEach((pkt) => {
-      if (!pkt.src_ip || !pkt.dst_ip) return;
-      
-      addNode(pkt.src_ip);
-      addNode(pkt.dst_ip);
-
-      const edgeId = `${pkt.src_ip}-${pkt.dst_ip}`;
-      if (!edgesMap.has(edgeId)) {
-        edgesMap.set(edgeId, {
-          id: edgeId,
-          source: pkt.src_ip,
-          target: pkt.dst_ip,
-          animated: true,
-          style: { stroke: '#3b82f6', strokeWidth: 2 },
-          label: pkt.protocol === 6 ? 'TCP' : pkt.protocol === 17 ? 'UDP' : 'ICMP',
-          labelStyle: { fill: '#94a3b8', fontSize: 10, fontWeight: 700 },
-          labelBgStyle: { fill: '#1e293b' }
-        });
-      }
+    weightedEdges.forEach(edge => {
+      addNode(edge.source);
+      addNode(edge.target);
     });
 
-    // Fire off async geo lookups for any new IPs found
     resolveIPs(Array.from(uniqueIps));
 
     return {
       nodes: Array.from(nodesMap.values()),
-      edges: Array.from(edgesMap.values()),
+      edges: weightedEdges,
     };
-    // We intentionally include geoData as a dependency so nodes re-render when geo fetching completes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tick, geoData, useGeo]); 
+  }, [tick, geoData, useGeo]); // Intentionally removed weightedEdges to throttle node generation to 10s
 
-  // Pass raw nodes into ELK layout engine
+  // Pass raw nodes and LIVE weightedEdges into ELK layout engine
   const { layoutedNodes, layoutedEdges, isComputing } = useNetworkLayout(
     rawGraphData.nodes, 
-    rawGraphData.edges, 
+    weightedEdges, 
     useHierarchical
   );
 
@@ -145,14 +132,25 @@ export default function NetworkTopology({ packets, alerts }) {
 
   // When ELK finishes computing, update ReactFlow states
   useEffect(() => {
-    // Add animate class for smooth sliding transitions
+    // If we have > 100 nodes, strip CSS transitions to save layout trashing CPU overhead
+    const highLoad = layoutedNodes.length > 100;
+    
     const nodesWithTransitions = layoutedNodes.map(n => ({
       ...n,
-      className: 'transition-all duration-300 ease-out'
+      className: highLoad ? '' : 'transition-all duration-300 ease-out'
     }));
     
     setNodes(nodesWithTransitions);
-    setEdges(layoutedEdges);
+    
+    // Also disable edge animation if high load
+    const optEdges = layoutedEdges.map(e => ({
+      ...e,
+      data: {
+        ...e.data,
+        animDuration: highLoad ? 0 : e.data.animDuration
+      }
+    }));
+    setEdges(optEdges);
   }, [layoutedNodes, layoutedEdges, setNodes, setEdges]);
 
   const onNodeClick = useCallback((event, node) => {
@@ -208,11 +206,15 @@ export default function NetworkTopology({ packets, alerts }) {
         )}
       </div>
       
+      {/* HUD Monitors */}
+      <PerformanceMonitor nodeCount={nodes.length} edgeCount={edges.length} />
+
       {/* Graph */}
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}

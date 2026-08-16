@@ -1,9 +1,11 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, PlayCircle } from 'lucide-react';
 import ExportPanel from './ExportPanel';
+import useStore from '../store/useStore';
 
 export default function Header({ connected, packets, alerts }) {
+  const { replayStatus } = useStore();
   return (
     <div className="relative overflow-hidden glass-panel mb-6 px-6 py-5 rounded-2xl">
       {/* Animated Background Mesh/Blobs */}
@@ -61,6 +63,19 @@ export default function Header({ connected, packets, alerts }) {
         </div>
         
         <div className="flex items-center gap-4">
+          {replayStatus?.active && (
+            <motion.div 
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="flex items-center gap-2 bg-severity-success/20 border border-severity-success/50 px-4 py-2 rounded-full hidden lg:flex shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+            >
+              <PlayCircle className="w-5 h-5 text-severity-success animate-pulse" />
+              <span className="text-sm font-bold text-severity-success whitespace-nowrap">
+                REPLAY MODE: {replayStatus.filename}
+              </span>
+            </motion.div>
+          )}
+
           <ExportPanel packets={packets} alerts={alerts} />
           
           <motion.div 
@@ -70,13 +85,13 @@ export default function Header({ connected, packets, alerts }) {
             className="flex items-center gap-3 bg-dark-base/50 border border-dark-border px-4 py-2 rounded-full hidden sm:flex"
           >
             <div className="flex items-center justify-center relative">
-              {connected && (
+              {connected && !replayStatus?.active && (
                 <span className="absolute w-3 h-3 rounded-full bg-severity-success opacity-75 animate-ping"></span>
               )}
               <span className={`relative w-2.5 h-2.5 rounded-full ${connected ? 'bg-severity-success' : 'bg-severity-critical'}`}></span>
             </div>
             <span className="text-sm font-medium text-gray-300">
-              {connected ? 'Live Network Monitoring Active' : 'System Disconnected'}
+              {replayStatus?.active ? 'Replaying PCAP...' : (connected ? 'Live Network Monitoring Active' : 'System Disconnected')}
             </span>
           </motion.div>
         </div>

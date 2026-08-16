@@ -1,0 +1,33 @@
+WARNING: No IPv4 address found on anpi0 !
+WARNING: No IPv4 address found on anpi1 !
+WARNING: more No IPv4 address found on en2 !
+[+] Database initialized: network_packets.db
+[+] Starting packet capture...
+[+] Press Ctrl+C to stop
+
+[+] Capture complete!
+[+] Total packets captured: 0
+[+] Data saved to: network_packets.db
+Traceback (most recent call last):
+  File "/Users/mishal/code/NetMon/venv/lib/python3.9/site-packages/scapy/arch/bpf/core.py", line 147, in get_dev_bpf
+    fd = os.open("/dev/bpf%i" % bpf, os.O_RDWR)
+PermissionError: [Errno 13] Permission denied: '/dev/bpf0'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/mishal/code/NetMon/capture.py", line 198, in <module>
+    capture.start_capture(interface=args.interface, count=args.count)
+  File "/Users/mishal/code/NetMon/capture.py", line 149, in start_capture
+    sniff(prn=self.packet_callback, iface=interface, store=False, count=count, promisc=False)
+  File "/Users/mishal/code/NetMon/venv/lib/python3.9/site-packages/scapy/sendrecv.py", line 1311, in sniff
+    sniffer._run(*args, **kwargs)
+  File "/Users/mishal/code/NetMon/venv/lib/python3.9/site-packages/scapy/sendrecv.py", line 1171, in _run
+    sniff_sockets[_RL2(iface)(type=ETH_P_ALL, iface=iface,
+  File "/Users/mishal/code/NetMon/venv/lib/python3.9/site-packages/scapy/arch/bpf/supersocket.py", line 331, in __init__
+    super(L2bpfListenSocket, self).__init__(*args, **kwargs)
+  File "/Users/mishal/code/NetMon/venv/lib/python3.9/site-packages/scapy/arch/bpf/supersocket.py", line 108, in __init__
+    (self.ins, self.dev_bpf) = get_dev_bpf()
+  File "/Users/mishal/code/NetMon/venv/lib/python3.9/site-packages/scapy/arch/bpf/core.py", line 151, in get_dev_bpf
+    raise Scapy_Exception((
+scapy.error.Scapy_Exception: Permission denied: could not open /dev/bpf0. Make sure to be running Scapy as root ! (sudo)

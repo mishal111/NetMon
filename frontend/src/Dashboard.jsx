@@ -13,14 +13,22 @@ import AdvancedSearch from './components/AdvancedSearch';
 import NetworkTopology from './components/NetworkTopology';
 import ThreatTimeline from './components/ThreatTimeline';
 import AlertSettings from './components/AlertSettings';
+import ForensicsPanel from './components/ForensicsPanel';
+import ReplayControls from './components/ReplayControls';
+import useWebSocketOptimized from './hooks/useWebSocketOptimized';
 
 export default function Dashboard() {
   const { activeView } = useStore();
   
   const [trafficData, setTrafficData] = useState([]);
-  const [packets, setPackets] = useState([]);
-  const [alerts, setAlerts] = useState([]);
-  const [connected, setConnected] = useState(false);
+  
+  // Use Optimized WebSocket Hook
+  const API_BASE = 'http://localhost:8001';
+  const WS_URL = 'ws://localhost:8001/ws/packets';
+  
+  const [initialPackets, setInitialPackets] = useState([]);
+  const [initialAlerts, setInitialAlerts] = useState([]);
+  const { packets, alerts, connected } = useWebSocketOptimized(WS_URL, initialPackets, initialAlerts);
   
   // KPI States
   const [kpiData, setKpiData] = useState({
@@ -30,19 +38,15 @@ export default function Dashboard() {
     topProto: 'N/A',
     topPort: 'N/A',
   });
-
-  const API_BASE = 'http://localhost:8001';
-  const WS_URL = 'ws://localhost:8001/ws/packets';
-
   const fetchInitialData = async () => {
     try {
       const alertsRes = await fetch(`${API_BASE}/alerts`);
       const alertsData = await alertsRes.json();
-      setAlerts(alertsData.alerts || []);
+      setInitialAlerts(alertsData.alerts || []);
 
       const packetsRes = await fetch(`${API_BASE}/packets?limit=200`); 
       const packetsData = await packetsRes.json();
-      setPackets(packetsData.packets || []);
+      setInitialPackets(packetsData.packets || []);
       
       await fetchMetrics();
     } catch (error) {
@@ -93,32 +97,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchInitialData();
-
-    const ws = new WebSocket(WS_URL);
-    
-    ws.onopen = () => setConnected(true);
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'new_packet') {
-          setPackets(prev => [data.packet, ...prev].slice(0, 200)); 
-        } else if (data.type === 'new_alert') {
-          setAlerts(prev => [data.alert, ...prev].slice(0, 100));
-        }
-      } catch (err) {
-        console.error("WebSocket error:", err);
-      }
-    };
-
-    ws.onclose = () => setConnected(false);
-
     const interval = setInterval(fetchMetrics, 10000);
-
-    return () => {
-      ws.close();
-      clearInterval(interval);
-    };
+    return () => clearInterval(interval);
   }, []);
 
   // --- View Renderers ---
@@ -180,6 +160,12 @@ export default function Dashboard() {
     </div>
   );
 
+  const renderForensics = () => (
+    <div className="flex flex-col h-full min-h-0 pb-6 overflow-y-auto">
+      <ForensicsPanel />
+    </div>
+  );
+
   const renderContent = () => {
     switch (activeView) {
       case 'overview': return renderOverview();
@@ -187,12 +173,14 @@ export default function Dashboard() {
       case 'analytics': return renderAnalytics();
       case 'alerts': return renderAlerts();
       case 'settings': return renderSettings();
+      case 'forensics': return renderForensics();
       default: return renderOverview();
     }
   };
 
   return (
     <div className="flex h-screen bg-dark-base text-gray-200 font-sans overflow-hidden selection:bg-primary-blue selection:text-white">
+      <ReplayControls />
       {/* Sidebar Navigation */}
       <Sidebar />
       

@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { LayoutDashboard, List, Activity, ShieldAlert, Settings } from 'lucide-react';
+import { LayoutDashboard, List, Activity, ShieldAlert, Settings, HardDrive } from 'lucide-react';
 import useStore from '../store/useStore';
 
 const navItems = [
@@ -8,6 +8,7 @@ const navItems = [
   { id: 'packets', label: 'Packets', icon: List },
   { id: 'analytics', label: 'Analytics', icon: Activity },
   { id: 'alerts', label: 'Alerts', icon: ShieldAlert },
+  { id: 'forensics', label: 'Forensics', icon: HardDrive },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 

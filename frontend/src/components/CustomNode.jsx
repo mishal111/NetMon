@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 
-export default function CustomNode({ data, selected }) {
+export default memo(function CustomNode({ data, selected }) {
   // Extract custom style passed through data.style for consistency
   const style = data.style || {};
   
@@ -36,4 +36,4 @@ export default function CustomNode({ data, selected }) {
       <Handle type="source" position={Position.Right} className="opacity-0" />
     </div>
   );
-}
+});

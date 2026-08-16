@@ -5,11 +5,14 @@ Captures live network packets and stores in SQLite database
 """
 
 from scapy.all import sniff, IP, TCP, UDP
+from scapy.utils import PcapWriter
 from datetime import datetime
 import sqlite3
 import argparse
 import signal
 import sys
+import threading
+import time
 
 class PacketCapture:
     def __init__(self, db_path="network_packets.db"):
@@ -17,7 +20,14 @@ class PacketCapture:
         self.conn = None
         self.cursor = None
         self.packet_count = 0
+        self.recording_file = None
+        self.pcap_writer = None
+        self.is_running = True
         self.setup_database()
+        
+        # Start settings watcher thread
+        self.settings_thread = threading.Thread(target=self.watch_settings, daemon=True)
+        self.settings_thread.start()
     
     def setup_database(self):
         """Create database and table if they don't exist"""
@@ -35,8 +45,44 @@ class PacketCapture:
                 size INTEGER
             )
         """)
+        
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
         self.conn.commit()
         print(f"[+] Database initialized: {self.db_path}")
+
+    def watch_settings(self):
+        """Background thread to watch for recording commands"""
+        while self.is_running:
+            try:
+                # Use a separate connection for the thread to avoid SQLite threading issues
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM settings WHERE key = 'recording_file'")
+                row = cursor.fetchone()
+                current_file = row[0] if row else None
+                conn.close()
+                
+                if current_file != self.recording_file:
+                    if self.pcap_writer:
+                        self.pcap_writer.close()
+                        self.pcap_writer = None
+                    
+                    self.recording_file = current_file
+                    
+                    if self.recording_file:
+                        print(f"[*] Started recording to {self.recording_file}")
+                        self.pcap_writer = PcapWriter(self.recording_file, append=True, sync=True)
+                    else:
+                        print(f"[*] Stopped recording.")
+            except Exception as e:
+                pass
+            
+            time.sleep(1)
     
     def extract_packet_info(self, packet):
         """Extract key information from a packet"""
@@ -86,6 +132,13 @@ class PacketCapture:
         """Callback for each captured packet"""
         pkt_info = self.extract_packet_info(packet)
         self.save_packet(pkt_info)
+        
+        # Write to PCAP if recording is active
+        if self.pcap_writer:
+            try:
+                self.pcap_writer.write(packet)
+            except Exception as e:
+                pass
     
     def start_capture(self, interface=None, count=0):
         """Start capturing packets"""
@@ -101,6 +154,11 @@ class PacketCapture:
     
     def close(self):
         """Close database connection and print summary"""
+        self.is_running = False
+        
+        if self.pcap_writer:
+            self.pcap_writer.close()
+            
         if self.conn:
             self.conn.close()
         

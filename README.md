@@ -1,84 +1,107 @@
-# Network Security Command Center
+# NetMon Security Command Center
 
-A real-time network traffic monitoring and anomaly detection platform. This project captures live network packets, analyzes traffic trends over time, detects suspicious activity using rule-based heuristics, and visualizes everything in a premium, glassmorphic React dashboard.
+NetMon is an enterprise-grade Network Security Operations Center (SOC) dashboard and real-time packet sniffer. It captures live network traffic directly from your machine's interface, analyzes it for malicious patterns using a custom detection engine, and streams the data over WebSockets to a high-performance React dashboard.
 
 ## 🚀 Features
 
-- **Live Packet Sniffing**: Captures raw network packets in real-time across your local network interfaces.
-- **Time-Series Analytics**: Aggregates traffic data (packets/sec, bytes/sec, protocol breakdowns) and stores them in InfluxDB for historical graphing.
-- **Anomaly Detection Engine**: Automatically detects and flags suspicious network activity:
-  - **DDoS / Volume Spikes**: Detects abnormally high packet counts in short windows.
-  - **Port Scans**: Detects single IP addresses rapidly scanning multiple distinct ports.
-- **Real-Time UI**: A React-based Security Command Center built with TailwindCSS. Features dark mode, glassmorphism, Recharts for trend visualization, and WebSockets for instant alert and packet streaming.
+### Core Capabilities
+*   **Live Packet Sniffing**: Uses Python `scapy` to capture packets at the network interface layer.
+*   **Real-Time Threat Detection**: Identifies DDoS attacks, Port Scans, and Authentication Brute Force attempts.
+*   **Time-Series Analytics**: Stores traffic metrics (PPS, Bandwidth) in InfluxDB for historical graphing.
+*   **WebSocket Streaming**: Streams live packets and security alerts instantly to the frontend with zero polling delay.
 
-## 🛠️ Technology Stack
+### Security Operations Center (SOC) Interface
+*   **Enterprise Dark Theme**: A sleek, glassmorphic UI built with TailwindCSS and Framer Motion animations.
+*   **Modular KPI Dashboards**: Live sparkline charts (via Recharts) tracking Packets/Sec, Bandwidth, Active Nodes, and Protocol distributions.
+*   **Advanced Packet Filtering**: Instantly filter live traffic by Source/Dest IP, Port, or Protocol natively in the browser.
+*   **Deep Packet Inspector**: Click any packet to reveal MAC addresses, TCP Flags, TTLs, and a mock Hexadecimal Payload view.
+*   **Configuration Settings**: Dynamically adjust the sensitivity thresholds for the underlying detection engine (DDoS limit, Port Scan threshold, etc).
+
+### Advanced Security Visualizations
+*   **Network Topology Map**: A massive, interactive map of your network traffic powered by React Flow and the `ELK.js` layout engine. 
+    *   *Edge Traffic Weighting*: Connections pulse and thicken dynamically based on exact traffic volume.
+    *   *IP Geolocation*: External IPs are resolved in the background (via `ip-api.com`) to inject Country Flags and City data directly into the nodes.
+    *   *Threat Highlighting*: Malicious IPs are immediately highlighted in Critical Red.
+    *   *Node Inspection*: Clicking a node slides out a deep-dive statistics panel for that specific IP.
+*   **Threat Timeline**: A chronological, 24-hour vertical timeline of all security events colored by severity.
+
+### Export Utilities
+*   **CSV & JSON**: Dump raw network packets or alert histories via Papaparse.
+*   **PDF Reports**: Generate a full dashboard snapshot report using `html2canvas` and `jsPDF`.
+
+---
+
+## 🛠 Tech Stack
 
 **Backend**
-- **Python 3**: Core language.
-- **Scapy**: For raw network packet capture and parsing.
-- **SQLite**: To store raw packet logs and generated alerts.
-- **InfluxDB**: Time-series database for high-performance metrics and analytics.
-- **FastAPI**: REST APIs and WebSocket management.
+*   Python 3.9
+*   FastAPI & Uvicorn (REST API & WebSockets)
+*   Scapy (Packet Capture)
+*   SQLite (Alert & Packet Storage)
+*   InfluxDB (Time-series Metric Storage)
 
 **Frontend**
-- **React (Vite)**: Fast, modern UI framework.
-- **Tailwind CSS**: Styling, dark-mode, and glassmorphic UI effects.
-- **Recharts**: Beautiful SVG charting library for time-series data.
-- **Lucide-React**: Modern iconography.
+*   React 18 & Vite
+*   TailwindCSS (Styling & Glassmorphism)
+*   Zustand (Global State Management)
+*   Framer Motion (UI Animations)
+*   @xyflow/react & ELK.js (Network Topology)
+*   Recharts (KPI Sparklines & Analytics)
 
-## 🏗️ Architecture
+---
 
-The system is composed of 4 main, decoupled processes running concurrently:
+## ⚙️ Setup & Installation
 
-1. **`capture.py`**: The raw packet sniffer. It continuously listens to the network interface and writes parsed packet data into `network_packets.db` (SQLite).
-2. **`analytics.py`**: The background aggregator. It polls SQLite every 10 seconds, computes averages/sums, and pushes time-series points to **InfluxDB**.
-3. **`detector.py`**: The security intelligence engine. It runs heuristic rules against recent traffic (from both SQLite and InfluxDB) and logs threats to the `alerts` table.
-4. **`app.py`**: The FastAPI server. It exposes REST endpoints for historical data and manages WebSockets to broadcast new packets and alerts instantly to the React frontend.
-
-## 🏁 How to Run
-
-You will need Docker (for InfluxDB) and Node.js (for the React frontend) installed.
-
-### 1. Start InfluxDB
-Make sure Docker is running, then start your InfluxDB container:
+### 1. Start the Database (InfluxDB)
+The application requires InfluxDB to store time-series traffic metrics. Start it using Docker:
 ```bash
-docker start influxdb
-# Or if running for the first time:
-# docker run -d --name influxdb -p 8086:8086 -e INFLUXDB_DB=network_security -e INFLUXDB_ADMIN_USER=admin -e INFLUXDB_ADMIN_PASSWORD=admin influxdb:1.8
+docker run -d -p 8086:8086 \
+  -e INFLUXDB_ADMIN_USER=admin \
+  -e INFLUXDB_ADMIN_PASSWORD=adminpassword \
+  -e INFLUXDB_DB=netmon \
+  influxdb:1.8
 ```
 
-### 2. Start the Python Backend
-Open separate terminal windows and run the following commands from the root directory:
-
+### 2. Start the Backend API
+Navigate to the root directory, activate your virtual environment, and start the FastAPI server:
 ```bash
-# Terminal 1: Packet Capture (Requires root/sudo privileges)
-sudo ./venv/bin/python3 capture.py
+# Ensure you have required packages installed
+./venv/bin/pip install -r requirements.txt
+./venv/bin/pip install websockets
 
-# Terminal 2: Analytics Engine
-./venv/bin/python3 analytics.py --interval 10
-
-# Terminal 3: Anomaly Detector
-./venv/bin/python3 detector.py --interval 10
-
-# Terminal 4: FastAPI Web Server
-./venv/bin/python3 app.py
+# Run the server (Must be run with sudo for Scapy packet sniffing privileges)
+sudo ./venv/bin/python3 app.py
 ```
+*The backend will boot up on `http://localhost:8001`.*
 
-### 3. Start the React Frontend
-Open one last terminal for the UI:
+### 3. Start the Frontend Dashboard
+Open a new terminal window, navigate to the `frontend` folder, install dependencies, and start Vite:
 ```bash
-# Terminal 5: Frontend
 cd frontend
+npm install
 npm run dev
 ```
+*The dashboard will boot up on `http://localhost:5173`.*
 
-Finally, open your browser and navigate to `http://localhost:5173` to view the Security Command Center.
+---
 
-## 🔧 Tuning False Positives
+## 📂 Project Structure
 
-By default, the `detector.py` rules are highly sensitive for demonstration purposes (e.g., flagging port scans after only 20 distinct ports). In a real-world environment, local gateways and mDNS traffic can trigger these. 
-
-You can tune the sensitivity by passing arguments to the detector:
-```bash
-./venv/bin/python3 detector.py --interval 10 --ddos-pps 1000 --scan-ports 100
+```text
+NetMon/
+├── app.py                  # Main FastAPI Server & WebSocket Handler
+├── capture.py              # Scapy Packet Capture Engine
+├── detector.py             # Security Threat Detection Engine
+├── analytics.py            # InfluxDB Metric Aggregation
+├── requirements.txt        # Python Dependencies
+├── netmon.db               # SQLite Database (Auto-generated)
+└── frontend/               # React Application
+    ├── package.json        
+    ├── tailwind.config.js  # Enterprise SOC Color Palette
+    └── src/
+        ├── App.jsx         
+        ├── Dashboard.jsx   # Main Layout & Routing
+        ├── index.css       # Global Styles & Custom Scrollbars
+        ├── hooks/          # Custom Logic (useStore, useEdgeWeights, useGeoIP)
+        └── components/     # UI Components (Header, Topology, Timeline, etc)
 ```

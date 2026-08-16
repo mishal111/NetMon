@@ -13,8 +13,10 @@ const elkOptions = {
 
 export default function useNetworkLayout(initialNodes, initialEdges, useHierarchical) {
   const [layoutedNodes, setLayoutedNodes] = useState([]);
-  const [layoutedEdges, setLayoutedEdges] = useState([]);
   const [isComputing, setIsComputing] = useState(false);
+
+  // Create a signature of the edge connections (ignoring data/weight changes)
+  const edgesSignature = initialEdges.map(e => e.id).sort().join(',');
 
   useEffect(() => {
     if (!initialNodes.length) return;
@@ -22,7 +24,6 @@ export default function useNetworkLayout(initialNodes, initialEdges, useHierarch
     if (!useHierarchical) {
       // Just use the provided positions (random)
       setLayoutedNodes(initialNodes);
-      setLayoutedEdges(initialEdges);
       return;
     }
 
@@ -61,12 +62,10 @@ export default function useNetworkLayout(initialNodes, initialEdges, useHierarch
         });
 
         setLayoutedNodes(nextNodes);
-        setLayoutedEdges(initialEdges); // ELK modifies edge routing too if we wanted, but we'll let ReactFlow draw straight lines
       } catch (err) {
         console.error("ELK Layout Error:", err);
         // Fallback
         setLayoutedNodes(initialNodes);
-        setLayoutedEdges(initialEdges);
       } finally {
         setIsComputing(false);
       }
@@ -74,7 +73,7 @@ export default function useNetworkLayout(initialNodes, initialEdges, useHierarch
 
     calculateLayout();
 
-  }, [initialNodes, initialEdges, useHierarchical]); // Re-run when input data changes
+  }, [initialNodes, edgesSignature, useHierarchical]); // Re-run only when nodes or structural edge connections change
 
-  return { layoutedNodes, layoutedEdges, isComputing };
+  return { layoutedNodes, layoutedEdges: initialEdges, isComputing };
 }

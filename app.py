@@ -532,6 +532,246 @@ async def fetch_alerts_summary():
     return get_alerts_summary()
 
 # ==========================================
+# Forensics & PCAP Recording Endpoints
+# ==========================================
+import os
+import glob
+from datetime import datetime
+from scapy.all import PcapReader, IP, TCP, UDP
+
+# Global state for PCAP replay control
+REPLAY_STATE = {
+    "status": "stopped", # playing, paused, stopped
+    "current": 0,
+    "total": 0,
+    "filename": ""
+}
+
+@app.post("/api/forensics/record/start")
+async def start_recording():
+    """Start PCAP recording by setting flag in DB"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Ensure directory exists
+        os.makedirs("pcaps", exist_ok=True)
+        filename = f"pcaps/capture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pcap"
+        
+        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('recording_file', ?)", (filename,))
+        conn.commit()
+        conn.close()
+        return {"status": "success", "filename": filename}
+    except Exception as e:
+        logger.error(f"Error starting recording: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/forensics/record/stop")
+async def stop_recording():
+    """Stop PCAP recording"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT value FROM settings WHERE key='recording_file'")
+        row = cursor.fetchone()
+        filename = row["value"] if row else None
+        
+        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('recording_file', '')")
+        conn.commit()
+        conn.close()
+        
+        return {"status": "success", "stopped_file": filename}
+    except Exception as e:
+        logger.error(f"Error stopping recording: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/forensics/recordings")
+async def list_recordings():
+    """List all saved PCAP files"""
+    try:
+        os.makedirs("pcaps", exist_ok=True)
+        files = glob.glob("pcaps/*.pcap")
+        
+        # Sort by modification time, newest first
+        files.sort(key=os.path.getmtime, reverse=True)
+        
+        recordings = []
+        for f in files:
+            stat = os.stat(f)
+            recordings.append({
+                "filename": os.path.basename(f),
+                "path": f,
+                "size_bytes": stat.st_size,
+                "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat()
+            })
+            
+        return {"recordings": recordings}
+    except Exception as e:
+        logger.error(f"Error listing recordings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def replay_pcap_task(filepath: str):
+    """Background task to slowly read a PCAP and broadcast packets"""
+    global REPLAY_STATE
+    
+    logger.info(f"Starting replay of {filepath}")
+    filename = os.path.basename(filepath)
+    
+    try:
+        # Pre-scan for total packets
+        total_packets = 0
+        with PcapReader(filepath) as pcap_reader:
+            for packet in pcap_reader:
+                if IP in packet:
+                    total_packets += 1
+                    
+        REPLAY_STATE = {
+            "status": "playing",
+            "current": 0,
+            "total": total_packets,
+            "filename": filename
+        }
+        
+        # Notify frontend that replay started
+        await manager.broadcast({
+            "type": "replay_start",
+            "filename": filename,
+            "total": total_packets
+        })
+        
+        # We need a dedicated DB connection for the background task
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        with PcapReader(filepath) as pcap_reader:
+            for packet in pcap_reader:
+                # Check control state
+                while REPLAY_STATE["status"] == "paused":
+                    await asyncio.sleep(0.5)
+                
+                if REPLAY_STATE["status"] == "stopped":
+                    break
+                    
+                if IP not in packet:
+                    continue
+                
+                REPLAY_STATE["current"] += 1
+                    
+                src_ip = packet[IP].src
+                dst_ip = packet[IP].dst
+                proto = packet[IP].proto
+                port = None
+                
+                if TCP in packet:
+                    port = packet[TCP].dport
+                elif UDP in packet:
+                    port = packet[UDP].dport
+                
+                size = len(packet)
+                timestamp = datetime.now().isoformat()
+                
+                # Insert into database so normal flows see it
+                cursor.execute("""
+                    INSERT INTO packets (timestamp, src_ip, dst_ip, protocol, port, size)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (timestamp, src_ip, dst_ip, proto, port, size))
+                
+                # Also directly broadcast to ensure it hits UI immediately during replay
+                packet_data = {
+                    "id": cursor.lastrowid,
+                    "timestamp": timestamp,
+                    "src_ip": src_ip,
+                    "dst_ip": dst_ip,
+                    "protocol": proto,
+                    "port": port,
+                    "size": size
+                }
+                
+                await manager.broadcast({
+                    "type": "new_packet",
+                    "packet": packet_data
+                })
+                
+                # Broadcast progress
+                await manager.broadcast({
+                    "type": "replay_progress",
+                    "current": REPLAY_STATE["current"],
+                    "total": REPLAY_STATE["total"],
+                    "status": REPLAY_STATE["status"]
+                })
+                
+                # Sleep a tiny bit to animate the replay nicely (e.g. 20 packets a sec)
+                await asyncio.sleep(0.05)
+                
+        conn.commit()
+        conn.close()
+        
+        REPLAY_STATE["status"] = "stopped"
+        
+        # Notify frontend that replay finished
+        await manager.broadcast({
+            "type": "replay_end",
+            "filename": filename
+        })
+        
+        logger.info(f"Finished replay of {filepath}")
+        
+    except Exception as e:
+        logger.error(f"Error replaying PCAP {filepath}: {e}")
+
+@app.post("/api/forensics/replay/{filename}")
+async def replay_recording(filename: str):
+    """Start replaying a PCAP file"""
+    filepath = os.path.join("pcaps", filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    # If another replay is active, stop it first
+    global REPLAY_STATE
+    if REPLAY_STATE["status"] != "stopped":
+        REPLAY_STATE["status"] = "stopped"
+        
+    # Launch in background
+    asyncio.create_task(replay_pcap_task(filepath))
+    return {"status": "success", "message": f"Started replay of {filename}"}
+
+@app.post("/api/forensics/replay/pause")
+async def pause_replay():
+    global REPLAY_STATE
+    if REPLAY_STATE["status"] == "playing":
+        REPLAY_STATE["status"] = "paused"
+        
+        # Broadcast progress update immediately so UI updates
+        await manager.broadcast({
+            "type": "replay_progress",
+            "current": REPLAY_STATE["current"],
+            "total": REPLAY_STATE["total"],
+            "status": "paused"
+        })
+    return {"status": REPLAY_STATE["status"]}
+
+@app.post("/api/forensics/replay/play")
+async def resume_replay():
+    global REPLAY_STATE
+    if REPLAY_STATE["status"] == "paused":
+        REPLAY_STATE["status"] = "playing"
+        
+        await manager.broadcast({
+            "type": "replay_progress",
+            "current": REPLAY_STATE["current"],
+            "total": REPLAY_STATE["total"],
+            "status": "playing"
+        })
+    return {"status": REPLAY_STATE["status"]}
+
+@app.post("/api/forensics/replay/stop")
+async def stop_replay():
+    global REPLAY_STATE
+    REPLAY_STATE["status"] = "stopped"
+    return {"status": REPLAY_STATE["status"]}
+
+# ==========================================
 # WebSocket Endpoint
 # ==========================================
 @app.websocket("/ws/packets")
